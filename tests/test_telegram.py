@@ -5,7 +5,7 @@ from aiogram.enums import ChatType
 from aiogram.types import User
 
 from app.config import TopicPolicy
-from app.handlers import HELP_TEXT, is_allowed_group
+from app.handlers import HELP_TEXT, is_allowed_group, send_help
 from app.telegram import TopicMessenger, batch_mentions, build_message_link, utf16_length
 
 
@@ -56,3 +56,16 @@ def test_help_lists_all_available_command_families() -> None:
     assert "!vk add" in HELP_TEXT
     assert "!vk list" in HELP_TEXT
     assert "!vk remove" in HELP_TEXT
+
+
+@pytest.mark.asyncio
+async def test_help_is_sent_as_html_only_for_static_help_text() -> None:
+    sent: dict[str, object] = {}
+
+    class FakeMessenger:
+        async def send_debug(self, chat_id: int, text: str, **kwargs: object) -> None:
+            sent.update(chat_id=chat_id, text=text, **kwargs)
+
+    await send_help(-1001, FakeMessenger())  # type: ignore[arg-type]
+
+    assert sent == {"chat_id": -1001, "text": HELP_TEXT, "parse_mode": "HTML"}

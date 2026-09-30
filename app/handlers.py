@@ -6,7 +6,7 @@ import shlex
 
 import structlog
 from aiogram import Bot, F, Router
-from aiogram.enums import ChatType
+from aiogram.enums import ChatType, ParseMode
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -41,7 +41,7 @@ def build_router(
     async def help_command(message: Message) -> None:
         if not is_allowed_group(message, messenger) or not _is_debug_message(message, messenger):
             return
-        await messenger.send_debug(message.chat.id, HELP_TEXT)
+        await send_help(message.chat.id, messenger)
 
     @router.message(F.text.regexp(r"^!all(?:\s|$)"))
     async def all_command(message: Message) -> None:
@@ -85,6 +85,10 @@ def is_allowed_group(message: Message, messenger: TopicMessenger) -> bool:
 def _is_debug_message(message: Message, messenger: TopicMessenger) -> bool:
     policy = messenger.policy_for(message.chat.id)
     return policy is not None and message.message_thread_id == policy.debug
+
+
+async def send_help(chat_id: int, messenger: TopicMessenger) -> None:
+    await messenger.send_debug(chat_id, HELP_TEXT, parse_mode=ParseMode.HTML)
 
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
