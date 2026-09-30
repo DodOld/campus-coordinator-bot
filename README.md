@@ -104,7 +104,7 @@ VK-цели, так как у них нет topic ID. Если Debug не нас
 выполняет команды только в теме `Debug`:
 
 ```text
-!vk add https://vk.com/example 102
+!vk add https://vk.ru/example 102
 !vk add example 102 preview
 !vk list
 !vk remove 1

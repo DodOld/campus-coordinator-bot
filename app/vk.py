@@ -21,7 +21,9 @@ from app.repositories import BotRepository
 from app.telegram import TopicMessenger
 
 log = structlog.get_logger(__name__)
-_COMMUNITY = re.compile(r"^(?:https?://)?(?:www\.)?vk\.com/([A-Za-z0-9_.-]+)|^([A-Za-z0-9_.-]+)$")
+VK_API_BASE_URL = "https://api.vk.ru/method"
+VK_WEB_BASE_URL = "https://vk.ru"
+_COMMUNITY = re.compile(r"^(?:(?:https?://)?(?:www\.)?vk\.(?:ru|com)/)?([A-Za-z0-9_.-]+)$", re.IGNORECASE)
 
 
 class VKAPIError(RuntimeError):
@@ -54,7 +56,7 @@ class VKAPIClient:
 
     async def _call(self, method: str, **params: object) -> Any:
         payload = {"access_token": self.token, "v": self.version, **params}
-        async with self.session.post(f"https://api.vk.com/method/{method}", data=payload) as response:
+        async with self.session.post(f"{VK_API_BASE_URL}/{method}", data=payload) as response:
             response.raise_for_status()
             data: dict[str, Any] = await response.json(content_type=None)
         error = data.get("error")
@@ -69,17 +71,14 @@ class VKAPIClient:
         return response_data
 
     async def resolve_public_community(self, value: str) -> VKCommunity:
-        match = _COMMUNITY.match(value.strip())
+        match = _COMMUNITY.fullmatch(value.strip())
         if match is None:
-            raise ValueError("Укажите публичный shortname или ссылку vk.com")
-        screen_name = match.group(1) or match.group(2)
-        resolved = await self._call("utils.resolveScreenName", screen_name=screen_name)
-        if not isinstance(resolved, dict):
-            raise VKAPIError(0, "Malformed VK resolve response")
-        if resolved.get("type") != "group" or not isinstance(resolved.get("object_id"), int):
-            raise ValueError("Указанный адрес не является публичным VK-сообществом")
-        group_id = int(resolved["object_id"])
-        groups = await self._call("groups.getById", group_id=group_id)
+            raise ValueError("Укажите публичный shortname или ссылку vk.ru")
+        screen_name = match.group(1)
+        # ``utils.resolveScreenName`` returns error 1051 for current VK service
+        # tokens, even though ``groups.getById`` is available.  The latter accepts
+        # a public screen name directly and confirms that it belongs to a group.
+        groups = await self._call("groups.getById", group_ids=screen_name)
         if isinstance(groups, list):
             items = groups
         elif isinstance(groups, dict):
@@ -91,9 +90,14 @@ class VKAPIClient:
         group = items[0]
         if not isinstance(group, dict):
             raise VKAPIError(0, "Malformed VK group metadata")
+        if not isinstance(group.get("id"), int):
+            raise ValueError("Указанный адрес не является публичным VK-сообществом")
+        group_id = int(group["id"])
         actual_screen_name = str(group.get("screen_name") or screen_name)
         return VKCommunity(
-            owner_id=-group_id, title=str(group.get("name") or actual_screen_name), url=f"https://vk.com/{actual_screen_name}"
+            owner_id=-group_id,
+            title=str(group.get("name") or actual_screen_name),
+            url=f"{VK_WEB_BASE_URL}/{actual_screen_name}",
         )
 
     async def wall_posts(self, owner_id: int, count: int = 20) -> list[VKWallPost]:
@@ -113,7 +117,7 @@ class VKAPIClient:
                     post_id=post_id,
                     published_at=datetime.fromtimestamp(int(item.get("date", 0)), tz=UTC),
                     text=str(item.get("text") or ""),
-                    url=f"https://vk.com/wall{owner_id}_{post_id}",
+                    url=f"{VK_WEB_BASE_URL}/wall{owner_id}_{post_id}",
                 )
             )
         return result
