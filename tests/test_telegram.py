@@ -5,7 +5,7 @@ from aiogram.enums import ChatType
 from aiogram.types import User
 
 from app.config import TopicPolicy
-from app.handlers import is_allowed_group
+from app.handlers import HELP_TEXT, is_allowed_group
 from app.telegram import TopicMessenger, batch_mentions, build_message_link, utf16_length
 
 
@@ -49,3 +49,10 @@ async def test_debug_error_never_echoes_exception_or_secret() -> None:
     await messenger.safe_debug_error(-1001, "VK API")
 
     assert sent == ["⚠️ Сбой задачи: VK API. Повторите позже."]
+
+
+def test_help_lists_all_available_command_families() -> None:
+    assert "!all" in HELP_TEXT
+    assert "!vk add" in HELP_TEXT
+    assert "!vk list" in HELP_TEXT
+    assert "!vk remove" in HELP_TEXT

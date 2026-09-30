@@ -117,8 +117,8 @@ class BotRepository:
         claim.status = "failed"
         await self.session.flush()
 
-    async def mark_source_checked(self, source: VKSource, newest_post_id: int | None) -> None:
+    async def mark_source_checked(self, source: VKSource, newest_post_id: int | None, *, reset_cursor: bool = False) -> None:
         source.last_checked_at = datetime.now(UTC)
         if newest_post_id is not None:
-            source.last_seen_post_id = max(source.last_seen_post_id or 0, newest_post_id)
+            source.last_seen_post_id = newest_post_id if reset_cursor else max(source.last_seen_post_id or 0, newest_post_id)
         await self.session.flush()

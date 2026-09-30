@@ -11,7 +11,9 @@ from app.vk import (
     VK_WEB_BASE_URL,
     VKAPIClient,
     VKAPIError,
+    needs_cursor_rebase,
     safe_excerpt,
+    source_wall_posts,
     with_vk_retries,
 )
 
@@ -67,6 +69,26 @@ async def test_vk_rate_limit_is_retried(monkeypatch: pytest.MonkeyPatch) -> None
 def test_safe_excerpt_strips_whitespace_and_limits_size() -> None:
     assert safe_excerpt(" one\n two ") == "one two"
     assert safe_excerpt("abcdef", limit=4) == "abcd…"
+
+
+def test_source_wall_posts_excludes_foreign_entries_and_keeps_own_post_url() -> None:
+    posts = source_wall_posts(
+        -73332691,
+        [
+            {"id": 10031, "from_id": -212881136, "owner_id": -73332691, "date": 1, "text": "чужой"},
+            {"id": 5342, "from_id": -73332691, "owner_id": -73332691, "date": 2, "text": "свой"},
+        ],
+    )
+
+    assert [post.post_id for post in posts] == [5342]
+    assert posts[0].url == "https://vk.ru/wall-73332691_5342"
+
+
+def test_cursor_rebases_if_legacy_value_belongs_to_foreign_entry() -> None:
+    posts = source_wall_posts(-1, [{"id": 42, "from_id": -1, "owner_id": -1, "date": 1}])
+
+    assert needs_cursor_rebase(101, posts)
+    assert not needs_cursor_rebase(42, posts)
 
 
 def test_vk_ru_is_the_primary_endpoint_and_both_public_domains_are_accepted() -> None:

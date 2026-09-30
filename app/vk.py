@@ -107,20 +107,38 @@ class VKAPIClient:
         items = response.get("items", [])
         if not isinstance(items, list):
             raise VKAPIError(0, "Malformed VK wall response")
-        result: list[VKWallPost] = []
-        for item in items:
-            if not isinstance(item, dict) or not isinstance(item.get("id"), int):
-                continue
-            post_id = int(item["id"])
-            result.append(
-                VKWallPost(
-                    post_id=post_id,
-                    published_at=datetime.fromtimestamp(int(item.get("date", 0)), tz=UTC),
-                    text=str(item.get("text") or ""),
-                    url=f"{VK_WEB_BASE_URL}/wall{owner_id}_{post_id}",
-                )
+        return source_wall_posts(owner_id, items)
+
+
+def source_wall_posts(owner_id: int, items: list[object]) -> list[VKWallPost]:
+    """Return only posts authored by the configured public community.
+
+    VK can include third-party entries in ``wall.get`` even with ``filter=owner``.
+    Their IDs are unrelated to the source wall and must not advance its cursor.
+    """
+    result: list[VKWallPost] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("from_id") != owner_id or not isinstance(item.get("id"), int):
+            continue
+        post_id = int(item["id"])
+        actual_owner_id = item.get("owner_id")
+        if not isinstance(actual_owner_id, int):
+            actual_owner_id = owner_id
+        result.append(
+            VKWallPost(
+                post_id=post_id,
+                published_at=datetime.fromtimestamp(int(item.get("date", 0)), tz=UTC),
+                text=str(item.get("text") or ""),
+                url=f"{VK_WEB_BASE_URL}/wall{actual_owner_id}_{post_id}",
             )
-        return result
+        )
+    return result
+
+
+def needs_cursor_rebase(last_seen_post_id: int | None, posts: list[VKWallPost]) -> bool:
+    """Detect a legacy cursor polluted by a third-party wall entry."""
+    newest = max((post.post_id for post in posts), default=None)
+    return last_seen_post_id is not None and newest is not None and last_seen_post_id > newest
 
 
 async def with_vk_retries(operation, attempts: int = 4):
@@ -160,7 +178,7 @@ class VKMonitor:
         if policy is None or not policy.allows_vk_target(target_thread_id):
             raise ValueError("Источник можно направить только в настроенную тему Posts или Schedule")
         community = await with_vk_retries(lambda: self.client.resolve_public_community(community_input))
-        latest = await with_vk_retries(lambda: self.client.wall_posts(community.owner_id, count=1))
+        latest = await with_vk_retries(lambda: self.client.wall_posts(community.owner_id, count=20))
         async with self.sessions() as session:
             source = VKSource(
                 chat_id=chat_id,
@@ -170,7 +188,7 @@ class VKMonitor:
                 target_thread_id=target_thread_id,
                 preview_enabled=preview,
                 poll_interval_seconds=self.settings.vk_poll_interval_seconds,
-                last_seen_post_id=latest[0].post_id if latest else None,
+                last_seen_post_id=max((post.post_id for post in latest), default=None),
             )
             await BotRepository(session).add_vk_source(source)
             await session.commit()
@@ -192,7 +210,9 @@ class VKMonitor:
             if elapsed < source.poll_interval_seconds:
                 return
         posts = await with_vk_retries(lambda: self.client.wall_posts(source.owner_id))
-        new_posts = sorted((post for post in posts if post.post_id > (source.last_seen_post_id or 0)), key=lambda p: p.post_id)
+        rebase_cursor = needs_cursor_rebase(source.last_seen_post_id, posts)
+        cursor = max((post.post_id for post in posts), default=0) if rebase_cursor else (source.last_seen_post_id or 0)
+        new_posts = sorted((post for post in posts if post.post_id > cursor), key=lambda p: p.post_id)
         for post in new_posts:
             claim = await self._claim(source.id, post)
             if claim is None:
@@ -216,7 +236,7 @@ class VKMonitor:
         async with self.sessions() as session:
             current = await session.get(VKSource, source.id)
             if current is not None:
-                await BotRepository(session).mark_source_checked(current, newest)
+                await BotRepository(session).mark_source_checked(current, newest, reset_cursor=rebase_cursor)
                 await session.commit()
 
     async def _claim(self, source_id: int, post: VKWallPost) -> VKProcessedPost | None:

@@ -16,6 +16,17 @@ from app.telegram import TopicMessenger
 from app.vk import VKMonitor
 
 log = structlog.get_logger(__name__)
+HELP_TEXT = """<b>Справка по командам</b>
+
+<code>!all [текст]</code> — упомянуть roster участников; команду можно написать в любой теме.
+<code>!help</code> — показать эту справку (только в Debug).
+
+<b>VK (только администраторы, только Debug)</b>
+<code>!vk add &lt;сообщество&gt; &lt;topic_id&gt; [preview]</code>
+<code>!vk list</code>
+<code>!vk remove &lt;id&gt;</code>
+
+Новый VK-источник начинает следить только за публикациями, появившимися после его добавления."""
 
 
 def build_router(
@@ -25,6 +36,12 @@ def build_router(
     sessions: async_sessionmaker[AsyncSession],
 ) -> Router:
     router = Router(name="group_commands")
+
+    @router.message(F.text == "!help")
+    async def help_command(message: Message) -> None:
+        if not is_allowed_group(message, messenger) or not _is_debug_message(message, messenger):
+            return
+        await messenger.send_debug(message.chat.id, HELP_TEXT)
 
     @router.message(F.text.regexp(r"^!all(?:\s|$)"))
     async def all_command(message: Message) -> None:
