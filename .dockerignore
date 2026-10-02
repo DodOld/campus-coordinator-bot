@@ -12,5 +12,6 @@ htmlcov/
 schedule/schedule-bot
 schedule/*.ics
 schedule.ics
+resources/
 docs/
 tests/

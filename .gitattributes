@@ -1,0 +1,3 @@
+# The calendar is a verbatim external snapshot. Its folded iCalendar lines may
+# legitimately end with spaces, so Git must not treat them as whitespace errors.
+resources/schedule/*.ics text eol=lf whitespace=-trailing-space
