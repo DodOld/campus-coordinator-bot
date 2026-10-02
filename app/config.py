@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = Field(default=8080, ge=1, le=65535)
     log_level: str = "INFO"
+    go_schedule_binary: str = "schedule-bot"
 
     @field_validator("allowed_chat_ids")
     @classmethod

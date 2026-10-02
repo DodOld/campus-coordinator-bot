@@ -93,7 +93,7 @@ async def run(settings: Settings) -> None:
         vk_monitor = VKMonitor(VKAPIClient(http_session, settings), sessions, messenger, settings)
         dispatcher = Dispatcher()
         dispatcher.update.outer_middleware(UpdateIdempotencyMiddleware(sessions))
-        dispatcher.include_router(build_router(AllService(bot, settings, sessions, messenger), vk_monitor, messenger, sessions))
+        dispatcher.include_router(build_router(AllService(bot, settings, sessions, messenger, settings), vk_monitor, messenger, sessions))
         job = asyncio.create_task(vk_loop(vk_monitor, settings.vk_poll_interval_seconds), name="vk-monitor")
         try:
             await bot.delete_webhook(drop_pending_updates=False)

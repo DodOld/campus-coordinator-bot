@@ -14,6 +14,8 @@ from app.all_service import AllService
 from app.repositories import BotRepository
 from app.telegram import TopicMessenger
 from app.vk import VKMonitor
+from app.schedule import fetch_schedule_json
+from app.config import Settings
 
 log = structlog.get_logger(__name__)
 HELP_TEXT = """<b>Справка по командам</b>
@@ -26,6 +28,8 @@ HELP_TEXT = """<b>Справка по командам</b>
 <code>!vk list</code>
 <code>!vk remove &lt;id&gt;</code>
 
+<code>!schedule</code> - отправить расписание
+
 Новый VK-источник начинает следить только за публикациями, появившимися после его добавления."""
 
 
@@ -34,8 +38,31 @@ def build_router(
     vk_monitor: VKMonitor,
     messenger: TopicMessenger,
     sessions: async_sessionmaker[AsyncSession],
+    settings: Settings,
 ) -> Router:
     router = Router(name="group_commands")
+
+    @router.message(F.text.regexp(r"^!schedule(?:\s|$)"))
+    async def schedule_command(message: Message) -> None:
+        if not is_allowed_group(message, messenger):
+            return
+        policy = messenger.policy_for(message.chat.id)
+        if policy is None or policy.schedule is None:
+            await messenger.send_debug(
+                    message.chat.id, "тема schedule не настроена"
+                    )
+            return
+        await messenger.send_schedule(message.chat.id, "загружаю расписание ...")
+        result = await fetch_schedule_json(
+                binary_path=settings.go_schedule_binary,
+                )
+
+        if result.error:
+            await messenger.send_debug(
+                    message.chat.id, f"ошибка расписания: {result.error}"
+                    )
+            return
+        await messenger.send_schedule(message.chat.id, result.message)
 
     @router.message(F.text == "!help")
     async def help_command(message: Message) -> None:

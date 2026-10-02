@@ -110,6 +110,16 @@ class TopicMessenger:
             # Logging is handled by the caller; Debug reporting must never crash a handler.
             return
 
+    async def send_schedule(self, chat_id: int, text: str, **kwargs) -> None:
+        policy = self.policy_for(chat_id)
+        if policy is None or policy.schedule is None:
+            return
+        await self.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=policy.schedule,
+                text=text,
+                **kwargs,
+                )
 
 async def eligible_group_members(bot: Bot, chat_id: int, user_ids: tuple[int, ...]) -> list[User]:
     semaphore = asyncio.Semaphore(8)
