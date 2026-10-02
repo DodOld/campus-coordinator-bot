@@ -9,5 +9,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 htmlcov/
+schedule/schedule-bot
+schedule/*.ics
+schedule.ics
 docs/
 tests/

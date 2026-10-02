@@ -22,6 +22,8 @@ from app.db import create_engine, create_session_factory
 from app.handlers import build_router
 from app.logging import configure_logging
 from app.repositories import BotRepository
+from app.schedule import GoBinaryScheduleProvider
+from app.schedule_service import ScheduleService, schedule_loop
 from app.telegram import TopicMessenger
 from app.vk import VKAPIClient, VKMonitor
 
@@ -91,17 +93,25 @@ async def run(settings: Settings) -> None:
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http_session:
         messenger = TopicMessenger(bot, settings.topic_policies)
         vk_monitor = VKMonitor(VKAPIClient(http_session, settings), sessions, messenger, settings)
+        schedule_service = ScheduleService(
+            GoBinaryScheduleProvider(settings.go_schedule_binary, settings.go_schedule_timeout_seconds), sessions, messenger
+        )
         dispatcher = Dispatcher()
         dispatcher.update.outer_middleware(UpdateIdempotencyMiddleware(sessions))
-        dispatcher.include_router(build_router(AllService(bot, settings, sessions, messenger, settings), vk_monitor, messenger, sessions))
-        job = asyncio.create_task(vk_loop(vk_monitor, settings.vk_poll_interval_seconds), name="vk-monitor")
+        dispatcher.include_router(
+            build_router(AllService(bot, settings, sessions, messenger), vk_monitor, schedule_service, messenger, sessions)
+        )
+        vk_job = asyncio.create_task(vk_loop(vk_monitor, settings.vk_poll_interval_seconds), name="vk-monitor")
+        schedule_job = asyncio.create_task(schedule_loop(schedule_service), name="schedule-publisher")
         try:
             await bot.delete_webhook(drop_pending_updates=False)
             await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
         finally:
-            job.cancel()
-            with suppress(asyncio.CancelledError):
-                await job
+            for job in (vk_job, schedule_job):
+                job.cancel()
+            for job in (vk_job, schedule_job):
+                with suppress(asyncio.CancelledError):
+                    await job
             await health.cleanup()
             await bot.session.close()
             await engine.dispose()

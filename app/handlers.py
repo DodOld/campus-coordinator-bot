@@ -12,10 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.all_service import AllService
 from app.repositories import BotRepository
+from app.schedule_service import ScheduleService
 from app.telegram import TopicMessenger
 from app.vk import VKMonitor
-from app.schedule import fetch_schedule_json
-from app.config import Settings
 
 log = structlog.get_logger(__name__)
 HELP_TEXT = """<b>Справка по командам</b>
@@ -28,7 +27,9 @@ HELP_TEXT = """<b>Справка по командам</b>
 <code>!vk list</code>
 <code>!vk remove &lt;id&gt;</code>
 
-<code>!schedule</code> - отправить расписание
+<b>Расписание 0B62 (только Debug)</b>
+<code>!schedule</code> — на сегодня.
+<code>!schedule mon|tue|wed|thu|fri|sat</code> — на ближайший указанный день.
 
 Новый VK-источник начинает следить только за публикациями, появившимися после его добавления."""
 
@@ -36,33 +37,21 @@ HELP_TEXT = """<b>Справка по командам</b>
 def build_router(
     all_service: AllService,
     vk_monitor: VKMonitor,
+    schedule_service: ScheduleService,
     messenger: TopicMessenger,
     sessions: async_sessionmaker[AsyncSession],
-    settings: Settings,
 ) -> Router:
     router = Router(name="group_commands")
 
     @router.message(F.text.regexp(r"^!schedule(?:\s|$)"))
     async def schedule_command(message: Message) -> None:
-        if not is_allowed_group(message, messenger):
+        if not is_allowed_group(message, messenger) or not _is_debug_message(message, messenger):
             return
-        policy = messenger.policy_for(message.chat.id)
-        if policy is None or policy.schedule is None:
-            await messenger.send_debug(
-                    message.chat.id, "тема schedule не настроена"
-                    )
+        arguments = shlex.split((message.text or "")[len("!schedule") :])
+        if len(arguments) > 1:
+            await messenger.send_debug(message.chat.id, "⚠️ Формат: !schedule [mon|tue|wed|thu|fri|sat]")
             return
-        await messenger.send_schedule(message.chat.id, "загружаю расписание ...")
-        result = await fetch_schedule_json(
-                binary_path=settings.go_schedule_binary,
-                )
-
-        if result.error:
-            await messenger.send_debug(
-                    message.chat.id, f"ошибка расписания: {result.error}"
-                    )
-            return
-        await messenger.send_schedule(message.chat.id, result.message)
+        await schedule_service.publish_requested(message.chat.id, arguments[0] if arguments else None)
 
     @router.message(F.text == "!help")
     async def help_command(message: Message) -> None:

@@ -1,66 +1,62 @@
 package main
 
 import (
+	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
-	"log"
-	"encoding/json"
+	"time"
 )
 
-type ScheduleResult struct {
-	Message		string `json:"message"`
-	FirstLesson string `json:"first_lesson,omitempty"`
-	Error		string `json:"error,omitempty"`
+type scheduleResult struct {
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 func main() {
-	jsonMode := false
-	for _, arg := range os.Args[1:] {
-		if arg == "--json" {
-			jsonMode = true
-		}
+	jsonMode := flag.Bool("json", false, "write JSON result")
+	dateText := flag.String("date", "", "target date in YYYY-MM-DD")
+	flag.Parse()
+	if !*jsonMode {
+		fmt.Fprintln(os.Stderr, "only --json mode is supported")
+		os.Exit(2)
 	}
 
-	if jsonMode {
-		runJSONMode()
+	targetDate, err := parseTargetDate(*dateText)
+	if err != nil {
+		writeResult(scheduleResult{Error: "invalid_date"}, 2)
 		return
 	}
-
-	log.Println("script successful running")
-
-	icsFile, err := GetIcsSchedule()
+	icsPath, cleanup, err := getIcsSchedule()
 	if err != nil {
-		log.Fatalf("error in downloading ics schedule: %v", err)
+		writeResult(scheduleResult{Error: "schedule_unavailable"}, 1)
+		return
 	}
-	log.Printf("successful downloaded file: %s", icsFile)
-
-	_, _, err = ParseIcs(icsFile)
+	defer cleanup()
+	message, err := parseIcs(icsPath, targetDate)
 	if err != nil {
-		log.Fatalf("error parsing ics schedule: %v", err)
+		writeResult(scheduleResult{Error: "schedule_unavailable"}, 1)
+		return
 	}
+	writeResult(scheduleResult{Message: message}, 0)
 }
 
-func runJSONMode() {
-	result := ScheduleResult{}
-
-	icsFile, err := GetIcsSchedule()
-	if err != nil {
-		result.Error = fmt.Sprintf("download error: %v", err)
-		b, _ := json.Marshal(result)
-		fmt.Println(string(b))
-		os.Exit(1)
+func parseTargetDate(value string) (time.Time, error) {
+	if value == "" {
+		now := time.Now().In(tomskLocation)
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, tomskLocation), nil
 	}
-
-	msg, firstLesson, err := ParseIcs(icsFile)
+	parsed, err := time.ParseInLocation("2006-01-02", value, tomskLocation)
 	if err != nil {
-		result.Error = fmt.Sprintf("parse error: %v", err)
-		b, _ := json.Marshal(result)
-		fmt.Println(string(b))
-		os.Exit(1)
+		return time.Time{}, err
 	}
+	return parsed, nil
+}
 
-	result.Message = msg
-	result.FirstLesson = firstLesson
-	b, _ := json.Marshal(result)
-	fmt.Println(string(b))
+func writeResult(result scheduleResult, exitCode int) {
+	encoded, _ := json.Marshal(result)
+	fmt.Println(string(encoded))
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }

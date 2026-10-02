@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -17,145 +15,103 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-type UpdateResponse struct {
-	URL			string	`json:"url"`
-	Error		bool	`json:"error"`
-	Response	string	`json:"response"`
-}
+const (
+	scheduleBaseURL = "https://ro-rasp.tpu.ru"
+	// Temporary source configured for group 0B62. Arbitrary group selection
+	// requires a documented mapping from a public group ID to this calendar ID.
+	scheduleCalendarID = "XMU0te"
+	exportClassID      = "ZnJvbnRlbmRcY3J1ZFxleHBvcnRcR3JvdXBFeHBvcnRDcnVk"
+)
 
-var customClient *http.Client
-
-func init() {
+func getIcsSchedule() (string, func(), error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		log.Fatalf("error creating cookie jar: %v", err)
+		return "", nil, err
 	}
-
-	customClient = &http.Client{
-		Jar: jar,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Resolver: &net.Resolver{
-					PreferGo: true,
-					Dial: func(ctx context.Context, network, addres string) (net.Conn, error) {
-						d := net.Dialer{Timeout: time.Second * 5}
-						return d.DialContext(ctx, "udp", "8.8.8.8:53")
-					},
-				},
-			}).DialContext,
-		},
-		Timeout: 45 * time.Second,
-	}
-}
-
-func GetIcsSchedule() (string, error) {
-	baseURL := "https://ro-rasp.tpu.ru"
-	classParam := "ZnJvbnRlbmRcY3J1ZFxleHBvcnRcR3JvdXBFeHBvcnRDcnVk"
-	kalendarParam := "XMU0te"
-
-	sourceURL := fmt.Sprintf("%s/app/modal/source.html?class=%s&kalendar=%s", baseURL, classParam, kalendarParam)
-	req, err := http.NewRequest("GET", sourceURL, nil)
+	client := &http.Client{Jar: jar, Timeout: 45 * time.Second}
+	sourceURL := fmt.Sprintf("%s/app/modal/source.html?class=%s&kalendar=%s", scheduleBaseURL, exportClassID, scheduleCalendarID)
+	request, err := http.NewRequest(http.MethodGet, sourceURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create source request: %w", err)
+		return "", nil, err
 	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
-	req.Header.Set("Referer", baseURL+"/")
-
-	resp, err := customClient.Do(req)
+	request.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
+	request.Header.Set("X-Requested-With", "XMLHttpRequest")
+	response, err := client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch modal source: %w", err)
+		return "", nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("bad status code from source: %d", resp.StatusCode)
+	body, readErr := io.ReadAll(response.Body)
+	response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("source request failed")
 	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	var modalResp struct {
+	var modalResponse struct {
 		HTML string `json:"html"`
 	}
-
-	var csrfToken string
-	if json.Unmarshal(bodyBytes, &modalResp) == nil && modalResp.HTML != "" {
-		doc, err := goquery.NewDocumentFromReader(strings.NewReader(modalResp.HTML))
-		if err == nil {
-			csrfToken, _ = doc.Find("input[name='_csrf']").Attr("value")
-		}
-	} else {
-		doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(bodyBytes)))
-		if err == nil {
-			csrfToken, _ = doc.Find("input[name='_csrf']").Attr("value")
-		}
+	if json.Unmarshal(body, &modalResponse) == nil && modalResponse.HTML != "" {
+		body = []byte(modalResponse.HTML)
 	}
-
-	if csrfToken == "" {
-		return "", fmt.Errorf("CSRF token not found in response")
+	document, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	if err != nil {
+		return "", nil, err
 	}
-
-	updateURL := fmt.Sprintf("%s/app/modal/update.html?class=%s&kalendar=%s", baseURL, classParam, kalendarParam)
-	formData := url.Values{
-		"_csrf":					 {csrfToken},
-		"GroupExportForm[kalendar]": {kalendarParam},
+	csrfToken, exists := document.Find("input[name='_csrf']").Attr("value")
+	if !exists || csrfToken == "" {
+		return "", nil, fmt.Errorf("csrf token missing")
+	}
+	values := url.Values{
+		"_csrf":                       {csrfToken},
+		"GroupExportForm[kalendar]":   {scheduleCalendarID},
 		"GroupExportForm[variant_id]": {"3"},
-		"GroupExportForm[agree]": {"1"},
+		"GroupExportForm[agree]":      {"1"},
 	}
-
-	postReq, err := http.NewRequest("POST", updateURL, strings.NewReader(formData.Encode()))
+	updateURL := fmt.Sprintf("%s/app/modal/update.html?class=%s&kalendar=%s", scheduleBaseURL, exportClassID, scheduleCalendarID)
+	post, err := http.NewRequest(http.MethodPost, updateURL, strings.NewReader(values.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("failed to create update request: %w", err)
+		return "", nil, err
 	}
-
-	postReq.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")
-	postReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	postReq.Header.Set("Referer", sourceURL)
-
-	postResp, err := customClient.Do(postReq)
+	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	post.Header.Set("Referer", sourceURL)
+	post.Header.Set("X-Requested-With", "XMLHttpRequest")
+	updated, err := client.Do(post)
 	if err != nil {
-		return "", fmt.Errorf("failed to send update POST: %w", err)
+		return "", nil, err
 	}
-	defer postResp.Body.Close()
-
-	var updateRes UpdateResponse
-	if err := json.NewDecoder(postResp.Body).Decode(&updateRes); err != nil {
-		return "", fmt.Errorf("failed to decode update response JSON: %w", err)
+	defer updated.Body.Close()
+	if updated.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("calendar update failed")
 	}
-
-	if updateRes.URL == "" {
-		return "", fmt.Errorf("empty download URL returned from server")
+	var payload struct {
+		URL string `json:"url"`
 	}
-
-	icsDownloadURL := baseURL + updateRes.URL
-	log.Printf("downloading schedule from: %s", icsDownloadURL)
-
-	icsResp, err := customClient.Get(icsDownloadURL)
+	if err := json.NewDecoder(updated.Body).Decode(&payload); err != nil || payload.URL == "" {
+		return "", nil, fmt.Errorf("calendar URL missing")
+	}
+	downloadURL, err := url.Parse(scheduleBaseURL + payload.URL)
+	if err != nil || downloadURL.Host != "ro-rasp.tpu.ru" {
+		return "", nil, fmt.Errorf("unsafe calendar URL")
+	}
+	icsResponse, err := client.Get(downloadURL.String())
 	if err != nil {
-		return "", fmt.Errorf("failed to download ICS file: %w", err)
+		return "", nil, err
 	}
-	defer icsResp.Body.Close()
-
-	if icsResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("bad status code on ICS download: %d", icsResp.StatusCode)
+	defer icsResponse.Body.Close()
+	if icsResponse.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("calendar download failed")
 	}
-
-	icsFilename := "schedule.ics"
-	out, err := os.Create(icsFilename)
+	file, err := os.CreateTemp("", "schedule-*.ics")
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	defer out.Close()
-
-	if _, err = io.Copy(out, icsResp.Body); err != nil {
-		return "", err
+	path := file.Name()
+	if _, err := io.Copy(file, icsResponse.Body); err != nil {
+		file.Close()
+		os.Remove(path)
+		return "", nil, err
 	}
-
-	return icsFilename, nil
+	if err := file.Close(); err != nil {
+		os.Remove(path)
+		return "", nil, err
+	}
+	return path, func() { _ = os.Remove(path) }, nil
 }

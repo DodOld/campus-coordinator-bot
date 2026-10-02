@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = Field(default=8080, ge=1, le=65535)
     log_level: str = "INFO"
-    go_schedule_binary: str = "schedule-bot"
+    go_schedule_binary: str = "/usr/local/bin/schedule-bot"
+    go_schedule_timeout_seconds: int = Field(default=60, ge=5, le=180)
 
     @field_validator("allowed_chat_ids")
     @classmethod
