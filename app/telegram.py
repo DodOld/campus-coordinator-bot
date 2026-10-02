@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from aiogram import Bot
+from aiogram.enums import ParseMode
 from aiogram.types import MessageEntity, User
 
 from app.config import TopicPolicy
@@ -88,6 +89,50 @@ def split_plaintext(value: str, max_chars: int = MAX_MESSAGE_CHARS) -> list[str]
     return chunks
 
 
+_CODE_FENCE_OPEN = "```\n"
+_CODE_FENCE_CLOSE = "\n```"
+
+
+def _escape_markdown_v2_code(value: str) -> str:
+    """Escape the two MarkdownV2 characters special inside a code block."""
+    return value.replace("\\", "\\\\").replace("`", "\\`")
+
+
+def _take_markdown_code_prefix(value: str, max_chars: int) -> tuple[str, str]:
+    """Take source characters whose escaped representation fits the limit."""
+    used = 0
+    for index, character in enumerate(value):
+        escaped_length = 2 if character in {"\\", "`"} else 1
+        if used + escaped_length > max_chars:
+            return value[:index], value[index:]
+        used += escaped_length
+    return value, ""
+
+
+def format_schedule_markdown(value: str, max_chars: int = MAX_MESSAGE_CHARS) -> list[str]:
+    """Return independently valid MarkdownV2 code blocks within Telegram's limit."""
+    payload_limit = max_chars - len(_CODE_FENCE_OPEN) - len(_CODE_FENCE_CLOSE)
+    if payload_limit < 2:
+        raise ValueError("max_chars is too small for a Markdown code block")
+    if not value:
+        return []
+
+    source_chunks: list[str] = []
+    current = ""
+    for line in value.splitlines(keepends=True):
+        remaining = line
+        while remaining:
+            used = len(_escape_markdown_v2_code(current))
+            prefix, remaining = _take_markdown_code_prefix(remaining, payload_limit - used)
+            current += prefix
+            if remaining:
+                source_chunks.append(current)
+                current = ""
+    if current:
+        source_chunks.append(current)
+    return [f"{_CODE_FENCE_OPEN}{_escape_markdown_v2_code(chunk)}{_CODE_FENCE_CLOSE}" for chunk in source_chunks]
+
+
 class TopicMessenger:
     def __init__(self, bot: Bot, policies: dict[int, TopicPolicy]) -> None:
         self.bot = bot
@@ -123,7 +168,13 @@ class TopicMessenger:
         if policy is None or policy.schedule is None:
             return []
         return [
-            await self.bot.send_message(chat_id=chat_id, message_thread_id=policy.schedule, text=chunk) for chunk in split_plaintext(text)
+            await self.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=policy.schedule,
+                text=chunk,
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            for chunk in format_schedule_markdown(text)
         ]
 
     async def safe_debug_error(self, chat_id: int, area: str) -> None:
