@@ -5,7 +5,7 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.types import User
 
 from app.config import TopicPolicy
-from app.handlers import HELP_TEXT, is_allowed_group, send_help
+from app.handlers import HELP_TEXT, build_router, is_allowed_group, send_help
 from app.telegram import TopicMessenger, batch_mentions, build_message_link, format_schedule_markdown, split_plaintext, utf16_length
 
 
@@ -57,6 +57,33 @@ def test_help_lists_all_available_command_families() -> None:
     assert "!vk list" in HELP_TEXT
     assert "!vk remove" in HELP_TEXT
     assert "!schedule mon|tue|wed|thu|fri|sat" in HELP_TEXT
+    assert "только администраторы" not in HELP_TEXT
+
+
+@pytest.mark.asyncio
+async def test_vk_command_in_debug_does_not_require_an_administrator() -> None:
+    sent: list[str] = []
+
+    class FakeMessenger:
+        policies = {-1001: TopicPolicy(debug=1, posts=2, schedule=3)}
+
+        def policy_for(self, chat_id: int) -> TopicPolicy | None:
+            return self.policies.get(chat_id)
+
+        async def send_debug(self, chat_id: int, text: str, **_: object) -> None:
+            sent.append(text)
+
+    router = build_router(object(), object(), object(), FakeMessenger(), object())  # type: ignore[arg-type]
+    callback = next(handler.callback for handler in router.message.handlers if handler.callback.__name__ == "vk_command")
+    message = SimpleNamespace(
+        text="!vk",
+        chat=SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP),
+        message_thread_id=1,
+    )
+
+    await callback(message)
+
+    assert sent == ["⚠️ Используйте !vk add, !vk list или !vk remove"]
 
 
 def test_schedule_text_is_split_without_losing_content() -> None:

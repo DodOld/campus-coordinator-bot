@@ -5,7 +5,7 @@ from __future__ import annotations
 import shlex
 
 import structlog
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.enums import ChatType, ParseMode
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,7 +22,7 @@ HELP_TEXT = """<b>Справка по командам</b>
 <code>!all [текст]</code> — упомянуть roster участников; команду можно написать в любой теме.
 <code>!help</code> — показать эту справку (только в Debug).
 
-<b>VK (только администраторы, только Debug)</b>
+<b>VK (только Debug)</b>
 <code>!vk add &lt;сообщество&gt; &lt;topic_id&gt; [preview]</code>
 <code>!vk list</code>
 <code>!vk remove &lt;id&gt;</code>
@@ -66,10 +66,8 @@ def build_router(
         await all_service.execute(message)
 
     @router.message(F.text.regexp(r"^!vk(?:\s|$)"))
-    async def vk_command(message: Message, bot: Bot) -> None:
+    async def vk_command(message: Message) -> None:
         if not is_allowed_group(message, messenger) or not _is_debug_message(message, messenger):
-            return
-        if message.from_user is None or not await _is_admin(bot, message.chat.id, message.from_user.id):
             return
         try:
             arguments = shlex.split((message.text or "")[len("!vk") :])
@@ -105,11 +103,6 @@ def _is_debug_message(message: Message, messenger: TopicMessenger) -> bool:
 
 async def send_help(chat_id: int, messenger: TopicMessenger) -> None:
     await messenger.send_debug(chat_id, HELP_TEXT, parse_mode=ParseMode.HTML)
-
-
-async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
-    member = await bot.get_chat_member(chat_id, user_id)
-    return str(member.status) in {"administrator", "creator", "owner"}
 
 
 async def _vk_add(message: Message, args: list[str], monitor: VKMonitor, messenger: TopicMessenger) -> None:
