@@ -6,7 +6,7 @@ from aiogram.types import User
 
 from app.config import TopicPolicy
 from app.handlers import HELP_TEXT, is_allowed_group, send_help
-from app.telegram import TopicMessenger, batch_mentions, build_message_link, utf16_length
+from app.telegram import TopicMessenger, batch_mentions, build_message_link, split_plaintext, utf16_length
 
 
 def _user(identifier: int, name: str) -> User:
@@ -56,6 +56,13 @@ def test_help_lists_all_available_command_families() -> None:
     assert "!vk add" in HELP_TEXT
     assert "!vk list" in HELP_TEXT
     assert "!vk remove" in HELP_TEXT
+    assert "!schedule mon|tue|wed|thu|fri|sat" in HELP_TEXT
+
+
+def test_schedule_text_is_split_without_losing_content() -> None:
+    text = "один\nдва\nтри"
+
+    assert split_plaintext(text, max_chars=8) == ["один\nдва", "три"]
 
 
 @pytest.mark.asyncio

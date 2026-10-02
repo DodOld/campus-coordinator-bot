@@ -11,15 +11,22 @@ Integration TODO for the future Go-to-Python replacement:
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import aiohttp
+import structlog
 from dateutil.rrule import rrulestr
 from icalendar import Calendar
+
+log = structlog.get_logger(__name__)
+TOMSK_TIMEZONE = ZoneInfo("Asia/Tomsk")
+WEEKDAY_ARGUMENTS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5}
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,3 +121,70 @@ def _expand_component(component, window_start: datetime, window_end: datetime, t
             )
         )
     return result
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedSchedule:
+    message: str
+    error: str | None = None
+
+
+class GoBinaryScheduleProvider:
+    """Run the checked-in 0B62 Go parser as a bounded JSON subprocess."""
+
+    def __init__(self, binary_path: str, timeout_seconds: int) -> None:
+        self.binary_path = binary_path
+        self.timeout_seconds = timeout_seconds
+
+    async def render_for(self, target_date: date) -> RenderedSchedule:
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.binary_path,
+                "--json",
+                "--date",
+                target_date.isoformat(),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=64 * 1024,
+            )
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=self.timeout_seconds)
+        except FileNotFoundError:
+            log.error("schedule_binary_not_found", binary_path=self.binary_path)
+            return RenderedSchedule(message="", error="binary_not_found")
+        except TimeoutError:
+            if process is not None:
+                process.kill()
+                await process.wait()
+            log.error("schedule_binary_timeout")
+            return RenderedSchedule(message="", error="timeout")
+        except OSError:
+            log.exception("schedule_binary_start_failed")
+            return RenderedSchedule(message="", error="startup_failed")
+
+        if process.returncode != 0:
+            log.error("schedule_binary_failed", returncode=process.returncode)
+            return RenderedSchedule(message="", error="failed")
+        try:
+            payload = json.loads(stdout)
+        except (TypeError, json.JSONDecodeError):
+            log.error("schedule_binary_invalid_json")
+            return RenderedSchedule(message="", error="invalid_json")
+        if not isinstance(payload, dict) or not isinstance(payload.get("message"), str) or payload.get("error"):
+            log.error("schedule_binary_invalid_payload")
+            return RenderedSchedule(message="", error="invalid_payload")
+        return RenderedSchedule(message=payload["message"])
+
+
+def schedule_date_for_argument(argument: str | None, now: datetime | None = None) -> date:
+    """Resolve today or the next requested class day in the Tomsk timezone."""
+    current = (now or datetime.now(TOMSK_TIMEZONE)).astimezone(TOMSK_TIMEZONE).date()
+    if argument is None:
+        return current
+    normalized = argument.casefold()
+    if normalized == "sun":
+        raise ValueError("Воскресенье не поддерживается: расписание доступно с mon по sat.")
+    weekday = WEEKDAY_ARGUMENTS.get(normalized)
+    if weekday is None:
+        raise ValueError("Формат: !schedule [mon|tue|wed|thu|fri|sat]")
+    return current + timedelta(days=(weekday - current.weekday()) % 7)

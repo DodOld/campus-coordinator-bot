@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import TopicPolicy
-from app.models import AllCommandAudit, ChatSettings, ProcessedUpdate, VKProcessedPost, VKSource
+from app.models import AllCommandAudit, ChatSettings, ProcessedUpdate, SchedulePublication, VKProcessedPost, VKSource
 
 
 class BotRepository:
@@ -121,4 +121,23 @@ class BotRepository:
         source.last_checked_at = datetime.now(UTC)
         if newest_post_id is not None:
             source.last_seen_post_id = newest_post_id if reset_cursor else max(source.last_seen_post_id or 0, newest_post_id)
+        await self.session.flush()
+
+    async def claim_schedule_publication(self, chat_id: int, schedule_date: date) -> SchedulePublication | None:
+        publication = SchedulePublication(chat_id=chat_id, schedule_date=schedule_date)
+        try:
+            async with self.session.begin_nested():
+                self.session.add(publication)
+                await self.session.flush()
+        except IntegrityError:
+            return None
+        return publication
+
+    async def finish_schedule_publication(self, publication: SchedulePublication, message_id: int) -> None:
+        publication.status = "delivered"
+        publication.delivered_message_id = message_id
+        await self.session.flush()
+
+    async def fail_schedule_publication(self, publication: SchedulePublication) -> None:
+        publication.status = "failed"
         await self.session.flush()

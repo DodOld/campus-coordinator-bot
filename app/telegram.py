@@ -72,6 +72,22 @@ def build_message_link(chat_id: int, message_id: int, chat_username: str | None)
     return None
 
 
+def split_plaintext(value: str, max_chars: int = MAX_MESSAGE_CHARS) -> list[str]:
+    """Split a long plain-text schedule at newlines where possible."""
+    if not value:
+        return []
+    chunks: list[str] = []
+    remaining = value
+    while len(remaining) > max_chars:
+        boundary = remaining.rfind("\n", 0, max_chars + 1)
+        if boundary <= 0:
+            boundary = max_chars
+        chunks.append(remaining[:boundary].rstrip())
+        remaining = remaining[boundary:].lstrip("\n")
+    chunks.append(remaining)
+    return chunks
+
+
 class TopicMessenger:
     def __init__(self, bot: Bot, policies: dict[int, TopicPolicy]) -> None:
         self.bot = bot
@@ -101,6 +117,14 @@ class TopicMessenger:
             text=text,
             **kwargs,
         )
+
+    async def send_schedule(self, chat_id: int, text: str) -> list[object]:
+        policy = self.policy_for(chat_id)
+        if policy is None or policy.schedule is None:
+            return []
+        return [
+            await self.bot.send_message(chat_id=chat_id, message_thread_id=policy.schedule, text=chunk) for chunk in split_plaintext(text)
+        ]
 
     async def safe_debug_error(self, chat_id: int, area: str) -> None:
         """Notify operators without serializing exception text or sensitive context."""
