@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     telegram_bot_token: SecretStr
+    telegram_proxy_url: SecretStr | None = None
     vk_api_token: SecretStr
     database_url: str
     allowed_chat_ids: str = ""

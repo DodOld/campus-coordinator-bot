@@ -61,6 +61,8 @@ uv run campus-coordinator-bot
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=...
+# Необязательно. SOCKS5 или HTTP(S)-прокси только для Telegram Bot API.
+TELEGRAM_PROXY_URL=socks5://127.0.0.1:10808
 VK_API_TOKEN=...
 POSTGRES_PASSWORD=use-a-long-random-password
 DATABASE_URL=postgresql+asyncpg://campus_bot:use-a-long-random-password@db:5432/campus_bot
@@ -82,6 +84,11 @@ GO_SCHEDULE_TIMEOUT_SECONDS=60
 корень группы. `posts` и `schedule` в такой конфигурации пока не поддерживают
 VK-цели, так как у них нет topic ID. Если Debug не настроен/недоступен, бот
 оставляет санитарное структурированное сообщение только в stdout.
+
+Если VPS не имеет прямого доступа к `api.telegram.org`, настройте
+`TELEGRAM_PROXY_URL`. URL используется только клиентом Telegram; токены VK,
+доступ к PostgreSQL и остальные исходящие запросы через него не проходят. Не
+коммитьте URL с учётными данными и не печатайте его в логах.
 
 ## Telegram-права и `!all`
 

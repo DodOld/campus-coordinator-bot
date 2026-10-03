@@ -11,6 +11,7 @@ import aiohttp
 import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiohttp import web
 from sqlalchemy import text
@@ -86,9 +87,11 @@ async def run(settings: Settings) -> None:
         await session.commit()
 
     health = await start_health_server(engine, settings.http_host, settings.http_port)
+    proxy_url = settings.telegram_proxy_url.get_secret_value() if settings.telegram_proxy_url else None
     bot = Bot(
         token=settings.telegram_bot_token.get_secret_value(),
         default=DefaultBotProperties(parse_mode=None),
+        session=AiohttpSession(proxy=proxy_url),
     )
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http_session:
         messenger = TopicMessenger(bot, settings.topic_policies)
