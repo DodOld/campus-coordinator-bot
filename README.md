@@ -62,7 +62,7 @@ uv run campus-coordinator-bot
 ```dotenv
 TELEGRAM_BOT_TOKEN=...
 # Необязательно. SOCKS5 или HTTP(S)-прокси только для Telegram Bot API.
-TELEGRAM_PROXY_URL=socks5://127.0.0.1:10808
+TELEGRAM_PROXY_URL=socks5://host.docker.internal:10808
 VK_API_TOKEN=...
 POSTGRES_PASSWORD=use-a-long-random-password
 DATABASE_URL=postgresql+asyncpg://campus_bot:use-a-long-random-password@db:5432/campus_bot
@@ -89,6 +89,10 @@ VK-цели, так как у них нет topic ID. Если Debug не нас
 `TELEGRAM_PROXY_URL`. URL используется только клиентом Telegram; токены VK,
 доступ к PostgreSQL и остальные исходящие запросы через него не проходят. Не
 коммитьте URL с учётными данными и не печатайте его в логах.
+
+При запуске через Docker локальный SOCKS-прокси на хосте указывается как
+`socks5://host.docker.internal:<порт>`. Compose добавляет это внутреннее имя
+через `host-gateway`; оно не публикует порт прокси во внешний интернет.
 
 ## Telegram-права и `!all`
 

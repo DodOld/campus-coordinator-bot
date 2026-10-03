@@ -12,7 +12,8 @@ failover.
 - Install the required Xray runtime from its official distribution.
 - Store the user-supplied JSON outside the Git checkout with root-only
   permissions; never log or commit its endpoint, password, or keys.
-- Run Xray as a systemd service exposing only its configured loopback SOCKS
+- Run Xray as a systemd service exposing its SOCKS listener only on the Docker
+  bridge gateway, so the bot container can reach it without an Internet-facing
   listener.
 - Test `api.telegram.org` through that SOCKS listener. Do not change the bot
   while the route has not passed this test.
@@ -42,7 +43,7 @@ failover.
 
 - The supplied profile is treated as secret configuration, not repository
   content.
-- The Xray listener remains bound to loopback; no proxy port is published to
-  the Internet.
+- The Xray listener remains bound to the Docker bridge gateway; no proxy port
+  is published to the Internet.
 - SSH, UFW, password authentication, and existing database configuration are
   not changed.
