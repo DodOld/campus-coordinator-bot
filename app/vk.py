@@ -13,7 +13,7 @@ from typing import Any
 import aiohttp
 import structlog
 from aiogram.enums import ParseMode
-from aiogram.types import InputMediaPhoto
+from aiogram.types import BufferedInputFile, InputMediaPhoto
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
@@ -24,6 +24,7 @@ from app.telegram import TopicMessenger
 log = structlog.get_logger(__name__)
 VK_API_BASE_URL = "https://api.vk.ru/method"
 VK_WEB_BASE_URL = "https://vk.ru"
+MAX_VK_PHOTO_BYTES = 10 * 1024 * 1024
 _COMMUNITY = re.compile(r"^(?:(?:https?://)?(?:www\.)?vk\.(?:ru|com)/)?([A-Za-z0-9_.-]+)$", re.IGNORECASE)
 
 
@@ -307,8 +308,50 @@ class VKMonitor:
             if current is not None:
                 await BotRepository(session).mark_source_checked(current, newest, reset_cursor=rebase_cursor)
                 await session.commit()
+    
+    async def _download_valid_photos(
+        self,
+        source: VKSource,
+        urls: tuple[str, ...],
+    ) -> list[BufferedInputFile]:
+        photos: list[BufferedInputFile] = []
+        skipped = 0
 
+        for index, url in enumerate(urls, start=1):
+            try:
+                async with self.client.session.get(url) as response:
+                    response.raise_for_status()
+
+                    content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                    if content_type and not content_type.startswith("image/"):
+                        raise ValueError("response is not an image")
+                    if response.content_length is not None and response.content_length > MAX_VK_PHOTO_BYTES:
+                        raise ValueError("photo is too large")
+
+                    data = bytearray()
+                    async for chunk in response.content.iter_chunked(64 * 1024):
+                        data.extend(chunk)
+                        if len(data) > MAX_VK_PHOTO_BYTES:
+                            raise ValueError("photo is too large")
+
+                if not data:
+                    raise ValueError("empty photo")
+
+                photos.append(BufferedInputFile(bytes(data), filename=f"vk-photo-{index}.jpg"))
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                skipped += 1
+                log.warning("vk_photo_skipped", source_id=source.id, photo_index=index)
+
+        if skipped:
+            await self.messenger.safe_debug_error(
+                source.chat_id,
+                f"Загрузка {skipped} фото из публикации VK",
+            )
+
+        return photos
+        
     async def _deliver_post(self, source: VKSource, post: VKWallPost):
+        photos = await self._download_valid_photos(source, post.photos)
         header = f'Новая публикация: <b>{html.escape(source.title)}</b>\n<a href="{post.url}">Открыть оригинал ВК</a>'
         content = post.text if post.text.strip() else ""
         if post.attachment_links:
@@ -331,17 +374,17 @@ class VKMonitor:
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=not source.preview_enabled,
             )
-        for start in range(0, len(post.photos), 10):
-            batch = post.photos[start : start + 10]
+        for start in range(0, len(photos), 10):
+            batch = photos[start : start + 10]
+
             if len(batch) == 1:
-                # sendMediaGroup требует минимум две фотки — такая вот ебаная прихоть Bot API.
                 await self.messenger.bot.send_photo(
                     chat_id=source.chat_id,
                     message_thread_id=source.target_thread_id,
                     photo=batch[0],
                 )
             else:
-                media = [InputMediaPhoto(media=url) for url in batch]
+                media = [InputMediaPhoto(media=photo) for photo in batch]
                 await self.messenger.bot.send_media_group(
                     chat_id=source.chat_id,
                     message_thread_id=source.target_thread_id,
